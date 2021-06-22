@@ -47,7 +47,7 @@ export default class SetupCommand extends MonkaSubCommand {
     // 1. Ask all the necessary questions
     try {
       if (!channel)
-        channel = await new ArgumentPrompter(message).promptTextChannel();
+        channel = await new ArgumentPrompter(message).autoPrompt('textChannel');
 
       [title, description] = await this._promptTitle(message);
 
@@ -134,7 +134,7 @@ export default class SetupCommand extends MonkaSubCommand {
     let givenMessage = (await args.pickResult('message')).value;
     if (!givenMessage) {
       const argumentPrompter = new ArgumentPrompter(message);
-      givenMessage = await argumentPrompter.autoPromptMessage();
+      givenMessage = await argumentPrompter.autoPrompt('message');
     }
 
     const isRrMenu = this.context.client.reactionRolesIds.has(givenMessage.id);
@@ -152,7 +152,7 @@ export default class SetupCommand extends MonkaSubCommand {
     let givenMessage = (await args.pickResult('message')).value;
     if (!givenMessage) {
       const argumentPrompter = new ArgumentPrompter(message);
-      givenMessage = await argumentPrompter.autoPromptMessage();
+      givenMessage = await argumentPrompter.autoPrompt('message');
     }
 
     const [title, description] = await this._promptTitle(message);

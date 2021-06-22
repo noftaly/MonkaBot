@@ -1,6 +1,30 @@
 /* eslint-disable import/prefer-default-export */
 import { stripIndent } from 'common-tags';
 
+/*
+interface Properties {
+  [x: string]: boolean | number | Properties | Properties[] | string;
+}
+
+interface OptionProperties {
+  aliases: string[];
+  description: string;
+  enabled: boolean;
+  usage: string;
+  examples: string[];
+}
+
+type ArgPrompts = Record<string, {
+    base: string;
+    invalid: string;
+  }>;
+
+interface CommandMessages {
+  options: OptionProperties;
+  messages: Properties & { prompts: ArgPrompts };
+}
+*/
+
 export const eclass = {
   options: {
     aliases: ['cours', 'class', 'ecours', 'eclass', 'e-cours', 'e-class'],
@@ -115,6 +139,8 @@ export const eclass = {
     subscribed: "Tu t'es bien inscrit au cours de \"{topic}\" ({subject}) ! Je te le rappellerai un peu avant :)",
     unsubscribed: "Tu t'es bien désinscrit du cours de \"{topic}\" ({subject}) !",
 
+    stoppedPrompting: "Tu as bien abandonné la commande ! Aucun cours n'a été créé.",
+
     // Prompts
     prompts: {
       classChannel: {
@@ -145,12 +171,10 @@ export const eclass = {
         base: 'Entrez le rôle visé (L1, L2...) (mentionnez-le ou entrez son nom ou son ID) :',
         invalid: 'Ce rôle est invalide.',
       },
-      recorded: {
+      isRecorded: {
         base: 'Entrez si oui ou non le cours sera enregistré (oui/o/yes/y | non/no/n) :',
         invalid: 'Cette valeur est invalide.',
       },
-
-      stoppedPrompting: "Tu as bien abandonné la commande ! Aucun cours n'a été créé.",
     },
   },
 };

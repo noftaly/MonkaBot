@@ -3,7 +3,7 @@ import { Argument } from '@sapphire/framework';
 
 const DATE_REGEX = /^(?<day>\d{1,2})[/-](?<month>\d{1,2})(?:[/-](?<year>\d{1,4}))?$/imu;
 
-export default class HourArgument extends Argument<Date> {
+export default class DateArgument extends Argument<Date> {
   public run(arg: string, _context: ArgumentContext<Date>): ArgumentResult<Date> {
     if (!DATE_REGEX.test(arg))
       return this.error({ parameter: arg });

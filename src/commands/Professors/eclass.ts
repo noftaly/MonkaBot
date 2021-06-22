@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/member-ordering */
 import { ApplyOptions } from '@sapphire/decorators';
-import { Args } from '@sapphire/framework';
+import type { ArgType } from '@sapphire/framework';
+import { Args, UserError } from '@sapphire/framework';
 import type { SubCommandPluginCommandOptions } from '@sapphire/plugin-subcommands';
 import dayjs from 'dayjs';
 import type { GuildMember, Role } from 'discord.js';
@@ -19,6 +20,42 @@ import type { GuildTextBasedChannel, HourMinutes } from '@/types';
 import { EclassDocument, EclassStatus } from '@/types/database';
 import { generateSubcommands, nullop, ValidateEclassArgument } from '@/utils';
 
+const { prompts } = config.messages;
+type PromptKey = keyof typeof prompts;
+
+async function matchNextArg<K extends keyof ArgType>(
+  args: Args,
+  argType: K,
+  argName: PromptKey,
+  checkArg = (_arg: ArgType[K]): boolean => true,
+): Promise<ArgType[K]> {
+  const arg = await args.pickResult<K>(argType);
+
+  if (arg.error || !checkArg(arg.value)) {
+    const error = {
+      identifier: 'ArgError',
+      message: prompts[argName].invalid,
+      context: arg.error
+        ? arg.error.message
+        : 'Error: Argument value is incorrect', // TODO: Custom error?
+    };
+    throw new UserError(error);
+  }
+
+  return arg.value;
+}
+
+async function matchArgs<K extends keyof ArgType>(
+  args: Args,
+  argsList: Array<[k: K, v: PromptKey]>,
+): Promise<Partial<Record<PromptKey, ArgType[K]>>> {
+  const parsedArgs: Partial<Record<PromptKey, ArgType[K]>> = {};
+  for (const [argType, argName] of argsList)
+    parsedArgs[argName] = (await matchNextArg(args, argType, argName));
+
+  return parsedArgs;
+}
+
 @ApplyOptions<SubCommandPluginCommandOptions>({
   ...config.options,
   generateDashLessAliases: true,
@@ -34,77 +71,41 @@ import { generateSubcommands, nullop, ValidateEclassArgument } from '@/utils';
     finish: { aliases: ['end', 'stop'] },
     help: { aliases: ['aide'], default: true },
   }),
-  preconditions: [{
-    name: 'customRole',
-    context: { role: settings.roles.eprof, message: config.messages.onlyProfessor },
-  }],
+  preconditions: [
+    {
+      name: 'customRole',
+      context: {
+        role: settings.roles.eprof,
+        message: config.messages.onlyProfessor,
+      },
+    },
+  ],
 })
 export default class EclassCommand extends MonkaSubCommand {
   public async create(message: GuildMessage, args: Args): Promise<void> {
-    const classChannel = await args.pickResult('guildTextBasedChannel');
-    if (classChannel.error) {
-      await message.channel.send(config.messages.prompts.classChannel.invalid);
-      return;
-    }
+    try {
+      const parsedArgs = await matchArgs(args, [
+        ['guildTextBasedChannel', 'classChannel'],
+        ['string', 'topic'],
+        ['date', 'date'],
+        ['hour', 'hour'],
+        ['guildTextBasedChannel', 'classChannel'],
+        ['duration', 'duration'],
+        ['member', 'professor'],
+        ['role', 'targetRole'],
+        ['boolean', 'isRecorded'],
+      ]); // TODO: Check coherent date
 
-    const topic = await args.pickResult('string');
-    if (topic.error) {
-      await message.channel.send(config.messages.prompts.topic.invalid);
-      return;
-    }
+      // parsedArgs.date.setHours(parsedArgs.hour.hour)
+      // parsedArgs.date.setMinutes(parsedArgs.hour.minutes);
 
-    const date = await args.pickResult('day');
-    if (date.error) {
-      await message.channel.send(config.messages.prompts.date.invalid);
-      return;
+      await EclassManager.createClass(message, parsedArgs);
+  } catch (err: unknown) {
+      await (err instanceof UserError
+        ? message.channel.send(err.message.toString())
+        : message.channel.send(`Unknown Error: ${err}`));
+      // Return
     }
-
-    const hour = await args.pickResult('hour');
-    if (hour.error) {
-      await message.channel.send(config.messages.prompts.hour.invalid);
-      return;
-    }
-
-    date.value.setHours(hour.value.hour);
-    date.value.setMinutes(hour.value.minutes);
-    if (!dayjs(date.value).isBetween(dayjs(), dayjs().add(2, 'month'))) {
-      await message.channel.send(config.messages.invalidDate);
-      return;
-    }
-
-    const duration = await args.pickResult('duration');
-    if (duration.error) {
-      await message.channel.send(config.messages.prompts.duration.invalid);
-      return;
-    }
-
-    const professor = await args.pickResult('member');
-    if (professor.error) {
-      await message.channel.send(config.messages.prompts.professor.invalid);
-      return;
-    }
-
-    const targetRole = await args.pickResult('role');
-    if (targetRole.error) {
-      await message.channel.send(config.messages.prompts.targetRole.invalid);
-      return;
-    }
-
-    const isRecorded = await args.pickResult('boolean');
-    if (isRecorded.error) {
-      await message.channel.send(config.messages.prompts.recorded.invalid);
-      return;
-    }
-
-    await EclassManager.createClass(message, {
-      date: date.value,
-      classChannel: classChannel.value,
-      topic: topic.value,
-      duration: duration.value,
-      professor: professor.value,
-      targetRole: targetRole.value,
-      isRecorded: isRecorded.value,
-    });
   }
 
   public async setup(message: GuildMessage): Promise<void> {
@@ -117,27 +118,45 @@ export default class EclassCommand extends MonkaSubCommand {
     let targetRole: Role;
     let isRecorded: boolean;
 
+    // const { prompts } = config.messages;
     try {
       const allMessages: GuildMessage[] = [];
       const prompter = new ArgumentPrompter(message, allMessages);
 
-      classChannel = await prompter.autoPromptTextChannel(config.messages.prompts.classChannel);
-      topic = await prompter.autoPromptText(config.messages.prompts.topic);
-      date = await prompter.autoPromptDate(config.messages.prompts.date);
-      hour = await prompter.autoPromptHour(config.messages.prompts.hour);
+      classChannel = await prompter.autoPrompt(
+        'textChannel',
+        prompts.classChannel,
+      );
+      topic = await prompter.autoPrompt('text',
+      prompts.topic);
+      date = await prompter.autoPrompt('date', prompts.date);
+      hour = await prompter.autoPrompt('hour', prompts.hour);
+
       date.setHours(hour.hour);
       date.setMinutes(hour.minutes);
       while (!dayjs(date).isBetween(dayjs(), dayjs().add(2, 'month'))) {
         await message.channel.send(config.messages.invalidDate);
-        date = await prompter.autoPromptDate(config.messages.prompts.date);
-        hour = await prompter.autoPromptHour(config.messages.prompts.hour);
+        date = await prompter.autoPrompt('date', prompts.date);
+        hour = await prompter.autoPrompt('hour', prompts.hour);
         date.setHours(hour.hour);
         date.setMinutes(hour.minutes);
       }
-      duration = await prompter.autoPromptDuration(config.messages.prompts.duration);
-      professor = await prompter.autoPromptMember(config.messages.prompts.professor);
-      targetRole = await prompter.autoPromptRole(config.messages.prompts.targetRole);
-      isRecorded = await prompter.autoPromptBoolean(config.messages.prompts.recorded);
+      duration = await prompter.autoPrompt(
+        'duration',
+        config.messages.prompts.duration,
+      );
+      professor = await prompter.autoPrompt(
+        'member',
+        config.messages.prompts.professor,
+      );
+      targetRole = await prompter.autoPrompt(
+        'role',
+        config.messages.prompts.targetRole,
+      );
+      isRecorded = await prompter.autoPrompt(
+        'boolean',
+        config.messages.prompts.recorded,
+      );
     } catch (error: unknown) {
       if ((error as Error).message === 'STOP') {
         await message.channel.send(messages.prompts.stoppedPrompting);
@@ -167,9 +186,15 @@ export default class EclassCommand extends MonkaSubCommand {
   }
 
   @ValidateEclassArgument({ statusIn: [EclassStatus.Planned] })
-  public async start(message: GuildMessage, _args: Args, eclass: EclassDocument): Promise<void> {
+  public async start(
+    message: GuildMessage,
+    _args: Args,
+    eclass: EclassDocument,
+  ): Promise<void> {
     // Fetch the member
-    const professor = await message.guild.members.fetch(eclass.professor).catch(nullop);
+    const professor = await message.guild.members
+      .fetch(eclass.professor)
+      .catch(nullop);
     if (!professor) {
       await message.channel.send(config.messages.unresolvedProfessor);
       return;
@@ -182,7 +207,11 @@ export default class EclassCommand extends MonkaSubCommand {
 
   @ValidateEclassArgument({ statusIn: [EclassStatus.Planned] })
   // eslint-disable-next-line complexity
-  public async edit(message: GuildMessage, args: Args, eclass: EclassDocument): Promise<void> {
+  public async edit(
+    message: GuildMessage,
+    args: Args,
+    eclass: EclassDocument,
+  ): Promise<void> {
     // Resolve the given arguments & validate them
     const shouldPing = args.getFlags('ping');
     const property = await args.pickResult('string');
@@ -300,7 +329,9 @@ export default class EclassCommand extends MonkaSubCommand {
       case 'rôle': {
         const targetRole = await args.pickResult('role');
         if (targetRole.error) {
-          await message.channel.send(config.messages.prompts.targetRole.invalid);
+          await message.channel.send(
+            config.messages.prompts.targetRole.invalid,
+          );
           return;
         }
 
@@ -330,7 +361,9 @@ export default class EclassCommand extends MonkaSubCommand {
           { new: true },
         );
         updateMessage = config.messages.editedRecorded;
-        notificationMessage = `${config.messages.pingEditedRecorded}${config.messages.pingEditedRecordedValues[Number(isRecorded.value)]}`;
+        notificationMessage = `${config.messages.pingEditedRecorded}${
+          config.messages.pingEditedRecordedValues[Number(isRecorded.value)]
+        }`;
         break;
       }
 
@@ -340,12 +373,21 @@ export default class EclassCommand extends MonkaSubCommand {
     }
 
     // Fetch the annoucement message
-    const originalChannel = await this.context.client.configManager.get(message.guild.id, eclass.announcementChannel);
-    const originalMessage = await originalChannel.messages.fetch(eclass.announcementMessage);
+    const originalChannel = await this.context.client.configManager.get(
+      message.guild.id,
+      eclass.announcementChannel,
+    );
+    const originalMessage = await originalChannel.messages.fetch(
+      eclass.announcementMessage,
+    );
 
     // Edit the announcement embed
-    const formattedDate = dayjs(eclass.date).format(settings.configuration.dateFormat);
-    const classChannel = message.guild.channels.resolve(eclass.classChannel) as GuildTextBasedChannel;
+    const formattedDate = dayjs(eclass.date).format(
+      settings.configuration.dateFormat,
+    );
+    const classChannel = message.guild.channels.resolve(
+      eclass.classChannel,
+    ) as GuildTextBasedChannel;
     await originalMessage.edit({
       content: originalMessage.content,
       embed: EclassManager.createAnnoucementEmbed({
@@ -363,30 +405,49 @@ export default class EclassCommand extends MonkaSubCommand {
     // Edit the role
     const { subject, topic } = eclass;
     const originalRole = message.guild.roles.resolve(eclass.classRole);
-    const newRoleName = pupa(settings.configuration.eclassRoleFormat, { subject, topic, formattedDate });
+    const newRoleName = pupa(settings.configuration.eclassRoleFormat, {
+      subject,
+      topic,
+      formattedDate,
+    });
     if (originalRole.name !== newRoleName)
       await originalRole.setName(newRoleName);
 
     // Send messages
     const payload = {
-      eclass: { ...eclass.toData(), role: message.guild.roles.resolve(eclass.targetRole).name },
+      eclass: {
+        ...eclass.toData(),
+        role: message.guild.roles.resolve(eclass.targetRole).name,
+      },
     };
     await message.channel.send(pupa(updateMessage, payload));
     if (shouldPing)
-      await classChannel.send(pupa(notificationMessage, payload));
+await classChannel.send(pupa(notificationMessage, payload));
   }
 
-  @ValidateEclassArgument({ statusIn: [EclassStatus.Planned, EclassStatus.InProgress] })
-  public async cancel(message: GuildMessage, _args: Args, eclass: EclassDocument): Promise<void> {
+  @ValidateEclassArgument({
+    statusIn: [EclassStatus.Planned, EclassStatus.InProgress],
+  })
+  public async cancel(
+    message: GuildMessage,
+    _args: Args,
+    eclass: EclassDocument,
+  ): Promise<void> {
     // Cancel the class & confirm.
     await EclassManager.cancelClass(eclass);
     await message.channel.send(config.messages.successfullyCanceled);
   }
 
   @ValidateEclassArgument({ statusIn: [EclassStatus.InProgress] })
-  public async finish(message: GuildMessage, _args: Args, eclass: EclassDocument): Promise<void> {
+  public async finish(
+    message: GuildMessage,
+    _args: Args,
+    eclass: EclassDocument,
+  ): Promise<void> {
     // Fetch the member
-    const professor = await message.guild.members.fetch(eclass.professor).catch(nullop);
+    const professor = await message.guild.members
+      .fetch(eclass.professor)
+      .catch(nullop);
     if (!professor) {
       await message.channel.send(config.messages.unresolvedProfessor);
       return;
