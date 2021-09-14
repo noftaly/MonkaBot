@@ -162,3 +162,16 @@ export const vocalCount = {
     count: 'Il y a {count} personne{plural} connectée{plural} dans ce salon vocal !',
   },
 };
+
+export const query = {
+  options: {
+    aliases: ['query'],
+    description: 'Permet de faire une requête HTTP',
+    enabled: true,
+    usage: 'query [get | post] <URL>',
+  },
+  messages: {
+    missingURL: 'URL non spécifié',
+    invalidQuery: 'Query non valide',
+  },
+};
